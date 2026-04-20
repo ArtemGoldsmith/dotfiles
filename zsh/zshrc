@@ -1,0 +1,87 @@
+# Load Order    Interactive  Interactive  Script
+# Startup       Only login   Always
+# ------------- -----------  -----------  ------
+#  /etc/zshenv       1            1         1
+#    ~/.zshenv       2            2         2
+# /etc/zprofile      3
+#   ~/.zprofile      4
+# /etc/zshrc         5            3
+#   ~/.zshrc         6            4
+# /etc/zlogin        7
+#   ~/.zlogin        8
+#
+# Shutdown
+# ------------- -----------  -----------  ------
+#   ~/.zlogout       9
+# /etc/zlogout      10
+#
+# Note: ZSH seems to read ~/.profile as well, if ~/.zshrc is not present.
+
+####################################################
+# Load github.com/tarjoilija/zgen and initialize it.
+source "${HOME}/dotfiles/zsh/zgen/zgen.zsh"
+ZGEN_RESET_ON_CHANGE=(${HOME}/.zshrc ${HOME}/.zshrc.local ${HOME}/dotfiles/zsh/zshrc )
+
+export DISABLE_AUTO_UPDATE="true" # disable OMZ auto update prompt
+
+# create zgen init script if it doesn't exist
+if ! zgen saved; then
+  	zgen oh-my-zsh
+
+  	plugins=(git git-extras history brew common-aliases macos tmux)
+	plugins+=(extract kubectl ollama ollama_zsh_completion)  # Removed 'z' - using zoxide instead
+  	for p in ${(@s' ')plugins}; do
+  		zgen oh-my-zsh plugins/$p
+  	done
+
+	zgen load ~/dotfiles/zsh/config/zsh-autosuggestions.zsh
+	zgen load zsh-users/zsh-autosuggestions
+	zgen load zsh-users/zsh-completions
+	zgen load djui/alias-tips
+	zgen load wfxr/forgit
+	zgen load ocodo/ollama_zsh_completion
+	#zgen load romkatv/zsh-prompt-benchmark
+
+	# As per instructions, load this last so that it wraps ZLE widgets.
+	zgen load zsh-users/zsh-syntax-highlighting
+
+	# generate the init script from plugins above
+	zgen save
+fi
+
+########################################################
+# Load custom config last, so it can override plugins ##
+find ~/dotfiles/zsh/config ~/dotfiles/zsh/aliases -type f -name '*.zsh' -print0 | sort -z |
+while IFS= read -r -d $'\0' line; do
+	source "$line"
+done
+
+# Enable all completions
+autoload -U compinit && compinit
+
+# As per instructions, load this last so that it wraps ZLE widgets.
+# source ~/.dotfiles/zsh/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+
+# Load local config if present, for final overrides.
+[[ -f ~/.zshrc.local ]] && source ~/.zshrc.local
+
+# LDA shell source
+if [ -f "$HOME/.lda/lda.sh" ]; then
+    source "$HOME/.lda/lda.sh"
+fi
+# These lines setup the DevZero CLI completions.
+if test -x "/usr/local/bin/dzcmd"; then
+source <(/usr/local/bin/dzcmd dz completion zsh)
+fi
+
+# tabtab source for packages
+# uninstall by removing these lines
+[[ -f ~/.config/tabtab/__tabtab.zsh ]] && . ~/.config/tabtab/__tabtab.zsh || true
+
+export PATH="/opt/homebrew/opt/openjdk@17/bin:$PATH"
+export PATH="/opt/homebrew/opt/openjdk@21/bin:$PATH"
+export JAVA_HOME="/opt/homebrew/opt/openjdk@21"
+
+# Bun
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"

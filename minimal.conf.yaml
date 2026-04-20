@@ -1,0 +1,5 @@
+- shell:
+  - [git submodule update --init, Installing submodules]
+
+- link:
+    ~/.zshrc: zsh/zshrc
