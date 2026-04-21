@@ -17,7 +17,7 @@ _grc_load_commands() {
     # Script is at: .dotfiles/zsh/config/grc.zsh
     # :h:h:h removes: grc.zsh, config/, zsh/ → gives us .dotfiles
     local grc_conf_dir="${GRC_CONF_DIR:-${${(%):-%x}:A:h:h:h}/grc}"
-    for f in ${grc_conf_dir}/conf.*; do
+    for f in ${grc_conf_dir}/conf.*(N); do
         [[ -f "$f" ]] || continue
         local prog=${f##*.}
         # SECURITY: Validate config filename contains only safe characters
