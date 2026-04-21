@@ -134,9 +134,9 @@ function ram() {
     fi
 }
 
-# jump to obsidian
+# jump to obsidian vault
 function o..(){
-  cd ~/Data/obsidian
+  cd ~/"The Vault"
 }
 
 # jump to dotfiles
