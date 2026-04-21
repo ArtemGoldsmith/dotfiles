@@ -12,3 +12,4 @@
 - link:
     ~/.zshrc: zsh/zshrc
     ~/.zshenv: zsh/config/paths.zsh
+    ~/.claude/statusline-command.sh: claude/statusline-command.sh
