@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Generic git hook dispatcher.
+#
+# Installed under every standard hook name in the global core.hooksPath.
+# Setting core.hooksPath globally would otherwise silently disable each
+# repository's own .git/hooks, so this runs the shared checks and then hands
+# off to the repo-local hook of the same name, if there is one.
+#
+# Repos that set core.hooksPath themselves (husky, lefthook) override the
+# global value entirely and never reach this script — their own tooling stays
+# in charge, but the shared secret scan does not run there.
+
+set -uo pipefail
+
+hook_name="$(basename "$0")"
+
+# Resolve this script through symlinks to locate its siblings.
+src="$0"
+while [ -L "$src" ]; do
+  dir="$(cd -P "$(dirname "$src")" && pwd)"
+  src="$(readlink "$src")"
+  case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+done
+hook_dir="$(cd -P "$(dirname "$src")" && pwd)"
+
+# Shared checks. Only pre-commit has anything to run today; note that nothing
+# here may read stdin, which belongs to the repo-local hook below.
+if [ "$hook_name" = "pre-commit" ] && [ -x "$hook_dir/secret-scan" ]; then
+  "$hook_dir/secret-scan" || exit $?
+fi
+
+# Hand off to the repository's own hook. Use the common dir so linked
+# worktrees resolve to the shared hooks directory rather than their own gitdir.
+common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+if [ -z "$common_dir" ]; then
+  common_dir="$(git rev-parse --git-common-dir 2>/dev/null)" || exit 0
+  case "$common_dir" in /*) ;; *) common_dir="$(pwd)/$common_dir" ;; esac
+fi
+
+local_hook="$common_dir/hooks/$hook_name"
+if [ -x "$local_hook" ]; then
+  # exec preserves stdin, which pre-push and friends depend on.
+  exec "$local_hook" "$@"
+fi
+
+exit 0

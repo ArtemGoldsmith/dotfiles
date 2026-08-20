@@ -14,5 +14,6 @@
     ~/.zshrc: zsh/zshrc
     ~/.zshenv: zsh/config/paths.zsh
     ~/.inputrc: inputrc
+    ~/.config/git/hooks: githooks/global
     ~/.claude/statusline-command.sh: claude/statusline-command.sh
     ~/.claude/iterm-status.sh: claude/iterm-status.sh
