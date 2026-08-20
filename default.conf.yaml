@@ -8,8 +8,11 @@
 
 - shell:
   - [git submodule update --init --recursive, Installing submodules]
+  - [git config core.hooksPath githooks, Wiring the secret-scanning pre-commit hook]
 
 - link:
     ~/.zshrc: zsh/zshrc
     ~/.zshenv: zsh/config/paths.zsh
+    ~/.inputrc: inputrc
     ~/.claude/statusline-command.sh: claude/statusline-command.sh
+    ~/.claude/iterm-status.sh: claude/iterm-status.sh
