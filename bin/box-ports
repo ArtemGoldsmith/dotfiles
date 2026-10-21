@@ -1,0 +1,125 @@
+#!/bin/bash
+# box-ports — forward every port that starts listening on a dev box to the same
+# port on this Mac (VS Code-style auto port forwarding), so a link such as
+# http://localhost:5173 printed in a box terminal opens on the Mac as-is.
+#
+# One dedicated ssh master per box with its own ControlPath, so ~/.ssh/config's
+# ControlPersist can't tear it down; forwards are added/removed on it with -O.
+# A port listening on two boxes goes to the first box in $BOXPORTS_HOSTS.
+# Runs under the localhost.box-ports LaunchAgent; log: ~/.local/state/box-ports/log
+#
+#   box-ports          # run the loop (what the LaunchAgent does)
+#   box-ports status   # list current forwards
+set -u
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+HOSTS="${BOXPORTS_HOSTS:-${SESH_HOSTS:-artem-2 artem-1}}"
+# Upper bound stops below Linux's ephemeral range (32768+), where outgoing
+# connections and random internal listeners live.
+MIN="${BOXPORTS_MIN:-1024}"
+MAX="${BOXPORTS_MAX:-32767}"
+INTERVAL="${BOXPORTS_INTERVAL:-3}"
+STATE="$HOME/.local/state/box-ports"
+FWD="$STATE/fwd"    # one file per forwarded port: "<host> <target>"
+SKIP="$STATE/skip"  # ports skipped because the Mac already listens on them
+
+log(){ printf '%s %s\n' "$(date '+%F %T')" "$*" >>"$STATE/log"; }
+sock(){ printf '%s/%s.sock' "$STATE" "$1"; }
+
+# `ss -ltnH` on stdin -> "<port> <target>" per forwardable listener, where
+# target is the address to dial on the box. Loopback is preferred because a
+# wildcard listener also answers there; a server bound only to the tailnet IP
+# (e.g. --host 100.x) is dialed on that IP.
+parse_listeners(){
+  awk -v min="$MIN" -v max="$MAX" '
+    {
+      a = $4; p = a; sub(/.*:/, "", p); h = substr(a, 1, length(a) - length(p) - 1)
+      if (h ~ /%/) next              # interface-scoped: tailscaled internals
+      gsub(/[][]/, "", h)
+      if (p + 0 < min || p + 0 > max) next
+      if (h == "0.0.0.0" || h == "*" || h == "::" || h == "127.0.0.1") { t = "127.0.0.1"; r = 0 }
+      else if (h == "::1") { t = "[::1]"; r = 1 }
+      else { t = h; r = 2 }
+      if (!(p in rank) || r < rank[p]) { rank[p] = r; tgt[p] = t }
+    }
+    END { for (p in tgt) print p, tgt[p] }' | sort -n
+}
+
+ensure_master(){
+  local host="$1" s; s="$(sock "$host")"
+  ssh -S "$s" -O check "$host" >/dev/null 2>&1 && return 0
+  # Master gone (sleep, network change): its forwards died with it.
+  rm -f "$s"
+  grep -l "^$host " "$FWD"/* 2>/dev/null | xargs rm -f
+  ssh -fNM -S "$s" -o ControlPersist=yes -o BatchMode=yes -o ConnectTimeout=10 \
+    -o ServerAliveInterval=15 -o ServerAliveCountMax=3 "$host" >/dev/null 2>&1 || return 1
+  log "master up: $host"
+}
+
+mac_listens(){ [ -n "$(lsof -nP -iTCP:"$1" -sTCP:LISTEN -t 2>/dev/null)" ]; }
+
+sync_host(){
+  local host="$1" s listeners port target owner f
+  s="$(sock "$host")"
+  listeners="$(ssh -S "$s" "$host" 'ss -ltnH' 2>/dev/null | parse_listeners)" || return 1
+
+  while read -r port target; do
+    [ -n "$port" ] || continue
+    if [ -e "$FWD/$port" ]; then             # already forwarded, maybe from another box
+      read -r owner f <"$FWD/$port"
+      [ "$owner" = "$host" ] && [ "$f" != "$target" ] || continue
+      # Same port re-bound to another address (e.g. 100.x -> 127.0.0.1): re-point.
+      ssh -S "$s" -O cancel -L "$port:$f:$port" "$host" >/dev/null 2>&1
+      rm -f "$FWD/$port"; log "rebind localhost:$port ($host): $f -> $target"
+    fi
+    if mac_listens "$port"; then
+      [ -e "$SKIP/$port" ] || { log "skip $port on $host: Mac already listens on it"; : >"$SKIP/$port"; }
+      continue
+    fi
+    if ssh -S "$s" -O forward -L "$port:$target:$port" "$host" >/dev/null 2>&1; then
+      echo "$host $target" >"$FWD/$port"; rm -f "$SKIP/$port"
+      log "forward localhost:$port -> $host $target:$port"
+    fi
+  done <<<"$listeners"
+
+  for f in "$FWD"/*; do
+    [ -e "$f" ] || continue
+    port="${f##*/}"; read -r owner target <"$f"
+    [ "$owner" = "$host" ] || continue
+    printf '%s\n' "$listeners" | grep -q "^$port " && continue
+    ssh -S "$s" -O cancel -L "$port:$target:$port" "$host" >/dev/null 2>&1
+    rm -f "$f"; log "closed localhost:$port ($host)"
+  done
+  for f in "$SKIP"/*; do
+    [ -e "$f" ] || continue
+    printf '%s\n' "$listeners" | grep -q "^${f##*/} " || rm -f "$f"
+  done
+}
+
+shutdown(){
+  local host
+  for host in $HOSTS; do ssh -S "$(sock "$host")" -O exit "$host" >/dev/null 2>&1; done
+  rm -f "$FWD"/*; exit 0
+}
+
+status(){
+  local f
+  for f in "$FWD"/*; do [ -e "$f" ] && printf 'localhost:%s -> %s\n' "${f##*/}" "$(cat "$f")"; done
+  return 0
+}
+
+main(){
+  mkdir -p "$FWD" "$SKIP"
+  case "${1:-}" in status) status; return;; esac
+  trap shutdown TERM INT
+  rm -f "$FWD"/* "$SKIP"/*
+  local host
+  for host in $HOSTS; do ssh -S "$(sock "$host")" -O exit "$host" >/dev/null 2>&1; rm -f "$(sock "$host")"; done
+  log "start: $HOSTS"
+  while :; do
+    for host in $HOSTS; do ensure_master "$host" && sync_host "$host"; done
+    sleep "$INTERVAL" & wait $!
+  done
+}
+
+[ "${BASH_SOURCE[0]}" = "$0" ] && main "$@"

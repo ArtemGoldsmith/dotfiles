@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# clip2box [-t] [host] — upload the image in the Mac clipboard to a dev box.
+# Default: replace the clipboard with the remote path, ready to ⌘V.
+# -t: print the path to stdout instead — for an iTerm "Run Coprocess" key
+#     binding, which types the output straight into the remote session.
+# Needed because terminal paste over ssh/mosh carries text only, and Claude on
+# the box reads the box's (non-existent) clipboard, not the Mac's.
+set -euo pipefail
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+type_mode=0
+if [ "${1:-}" = "-t" ]; then type_mode=1; shift; fi
+
+pick_host() {
+  # A coprocess can't tell which box its session is on; when exactly one box
+  # has live mosh sessions, that's the one.
+  local hosts
+  hosts="$(ps -axo command= | sed -nE 's/^[^ ]*mosh-client -# ([^ ]+) .*/\1/p' | sort -u)"
+  if [ "$(printf '%s\n' "$hosts" | grep -c .)" = 1 ]; then echo "$hosts"; else echo "${HX_HOST:-artem-2}"; fi
+}
+
+host="${1:-$(pick_host)}"
+name="clip-$(date +%Y%m%d-%H%M%S).png"
+tmp="$(mktemp -t clip2box).png"
+trap 'rm -f "$tmp"' EXIT
+
+if ! osascript -e "set f to open for access POSIX file \"$tmp\" with write permission" \
+  -e 'write (the clipboard as «class PNGf») to f' \
+  -e 'close access f' >/dev/null 2>&1; then
+  echo "clip2box: no image in clipboard" >&2
+  exit 1
+fi
+
+remote_dir="$(ssh "$host" 'mkdir -p ~/clip && cd ~/clip && pwd')"
+scp -q "$tmp" "$host:$remote_dir/$name"
+if [ "$type_mode" = 1 ]; then
+  printf '%s ' "$remote_dir/$name"
+else
+  printf '%s' "$remote_dir/$name" | pbcopy
+  echo "$host:$remote_dir/$name (path copied)"
+fi
