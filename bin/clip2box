@@ -27,6 +27,12 @@ trap 'rm -f "$tmp"' EXIT
 if ! osascript -e "set f to open for access POSIX file \"$tmp\" with write permission" \
   -e 'write (the clipboard as «class PNGf») to f' \
   -e 'close access f' >/dev/null 2>&1; then
+  if [ "$type_mode" = 1 ]; then
+    # No image: behave as a plain paste so one key works for both. Bracketed
+    # paste markers keep multi-line text from being submitted line by line.
+    printf '\033[200~%s\033[201~' "$(pbpaste)"
+    exit 0
+  fi
   echo "clip2box: no image in clipboard" >&2
   exit 1
 fi
